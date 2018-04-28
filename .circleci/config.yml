@@ -1,0 +1,83 @@
+version: 2
+
+terraform: &terraform
+  docker:
+    - image: hashicorp/terraform:0.10.4
+  environment:
+    TF_IN_AUTOMATION: "true"
+  working_directory: /src/tf
+
+jobs:
+  validate-and-plan:
+    <<: *terraform
+    steps:
+      - checkout
+      - run:
+          name: terraform init
+          command: terraform init -input=false
+      - run:
+          name: Validate Terraform configurations
+          command: terraform validate -input=false 
+      - run:
+          name: Check if Terraform configurations are properly formatted
+          command: terraform fmt -write=false
+      - run:
+          name: Terraform plan
+          command: terraform plan -input=false
+      - persist_to_workspace:
+          root: /src
+          paths: 
+            - tf
+
+  tflint:
+    docker: 
+      - image: wata727/tflint
+    steps:
+      - checkout
+
+      - run:
+          name: TFLint
+          command: tflint
+
+  apply:
+    <<: *terraform
+    steps:
+      - attach_workspace:
+          at: /src
+      - run: 
+          name: Terraform apply
+          command: terraform apply -input=false
+
+workflows:
+  version: 2
+  commit:
+    jobs:
+      - validate-and-plan
+      - tflint
+
+      - hold:
+          type: approval
+          filters:
+            branches:
+              only: master
+          requires:
+           - tflint
+           - validate-and-plan
+
+      - apply:
+          requires:
+            - hold
+          filters:
+            branches:
+              only: master
+
+  refresh-plan:
+    jobs:
+      - validate-and-plan
+    triggers:
+      - schedule:
+        cron: "0 0 * * *"
+        filters:
+          branches:
+            ignore:
+              - master
